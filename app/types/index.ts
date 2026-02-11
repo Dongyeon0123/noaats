@@ -16,6 +16,7 @@ export interface CarCosts {
   tollFee: number; // 편도 통행료
   maintenanceFee: number; // 연간 정비비
   depreciationYears: number; // 감가상각 기간
+  currentCarValue?: number; // 현재 보유 차량 시세 (선택)
 }
 
 export interface TimeValue {

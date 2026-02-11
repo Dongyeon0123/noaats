@@ -35,9 +35,22 @@ export function calculateCosts(
   const carTimeCost = carTimeSpent * timeValue.hourlyWage;
   const carTotalMonthlyCost = carMonthlyCost + carTimeCost;
 
-  // 손익분기점 계산 (초기 투자 회수)
-  const monthlySavings = publicTransportTotalMonthlyCost - (carMonthlyCost - depreciationMonthly + carTimeCost);
-  const breakEvenMonths = monthlySavings > 0 ? car.purchasePrice / monthlySavings : Infinity;
+  // 손익분기점 계산
+  // 자동차가 대중교통보다 저렴한 경우에만 손익분기점 계산
+  let breakEvenMonths: number;
+  
+  if (carTotalMonthlyCost < publicTransportTotalMonthlyCost) {
+    // 월별 절감액 (대중교통 - 자동차 운영비)
+    // 자동차 운영비에서 감가상각 제외 (이미 차량 구매가로 지불했으므로)
+    const carOperatingCostWithoutDepreciation = carMonthlyCost - depreciationMonthly + carTimeCost;
+    const monthlySavings = publicTransportTotalMonthlyCost - carOperatingCostWithoutDepreciation;
+    
+    // 초기 투자(차량 구매가)를 회수하는데 걸리는 시간
+    breakEvenMonths = monthlySavings > 0 ? car.purchasePrice / monthlySavings : Infinity;
+  } else {
+    // 자동차가 더 비싸면 손익분기점 없음
+    breakEvenMonths = Infinity;
+  }
 
   // 추천
   let recommendation: 'car' | 'publicTransport' | 'similar';
