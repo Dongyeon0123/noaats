@@ -1,36 +1,143 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🚗 vs 🚌 출퇴근 비용 계산기
 
-## Getting Started
+자동차 구매와 대중교통 이용의 총 비용을 비교하고 손익분기점을 계산하는 웹 애플리케이션입니다.
 
-First, run the development server:
+## 📋 프로젝트 개요
+
+화성 병점에서 서초까지 출퇴근하는 직장인이 차량 구매를 고민할 때, 실질적인 의사결정을 돕기 위해 개발한 비용 계산 도구입니다.
+
+### 해결하려는 문제
+
+- 단순히 "교통비 vs 유류비"만 비교하는 것이 아닌, **모든 숨은 비용**을 포함한 총 비용 비교
+- 출퇴근 시간 차이의 **기회비용** 계산
+- 차량 구매 시 **손익분기점** 분석
+- 감가상각, 보험, 세금, 주차비, 통행료, 정비비 등 **실제 발생하는 모든 비용** 고려
+
+## 🎯 핵심 기능
+
+1. **출퇴근 정보 입력**
+   - 편도 거리, 근무일수
+   - 대중교통/자동차 각각의 소요시간과 비용
+
+2. **자동차 비용 계산**
+   - 차량 구매가 및 감가상각
+   - 유류비 (연비 기반 계산)
+   - 보험료, 세금
+   - 주차비, 통행료
+   - 정비비
+
+3. **시간 가치 환산**
+   - 출퇴근 시간의 기회비용 계산
+   - 시간당 가치 설정 가능
+
+4. **비교 분석**
+   - 월/연간 총 비용 비교
+   - 손익분기점 계산
+   - 추천 제공
+
+## 🚀 실행 방법
+
+### 로컬 실행
 
 ```bash
+# 의존성 설치
+npm install
+
+# 개발 서버 실행
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+브라우저에서 http://localhost:3000 접속
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 빌드
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run build
+npm start
+```
 
-## Learn More
+## 🛠 기술 스택
 
-To learn more about Next.js, take a look at the following resources:
+- **Framework**: Next.js 15 (App Router)
+- **Language**: TypeScript
+- **Styling**: Tailwind CSS
+- **Deployment**: Vercel (예정)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 📊 계산 로직
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 대중교통 총 비용
+```
+월 교통비 = 편도 비용 × 2 × 근무일수
+시간 기회비용 = (편도 시간 × 2 × 근무일수 / 60) × 시간당 가치
+월 총 비용 = 월 교통비 + 시간 기회비용
+```
 
-## Deploy on Vercel
+### 자동차 총 비용
+```
+월 감가상각비 = 차량 구매가 / (감가상각 기간 × 12)
+월 유류비 = (월 주행거리 / 연비) × 유류 단가
+월 운영비 = 감가상각비 + 유류비 + 보험료/12 + 세금/12 + 주차비 + 통행료 + 정비비/12
+시간 기회비용 = (편도 시간 × 2 × 근무일수 / 60) × 시간당 가치
+월 총 비용 = 월 운영비 + 시간 기회비용
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 손익분기점
+```
+월 절감액 = 대중교통 총 비용 - (자동차 운영비 - 감가상각비 + 시간 기회비용)
+손익분기점 = 차량 구매가 / 월 절감액
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 📝 사용 시나리오
+
+### 예시: 화성 병점 → 서초 출퇴근
+
+**대중교통**
+- 편도 시간: 90분
+- 편도 비용: 3,200원
+- 월 근무일: 22일
+- 월 교통비: 140,800원
+
+**자동차 (3천만원 차량)**
+- 편도 시간: 60분
+- 편도 거리: 50km
+- 연비: 12km/L
+- 유류비: 1,600원/L
+- 월 유류비: 약 293,333원
+- 보험/세금/주차/통행료/정비: 약 300,000원
+- 월 감가상각: 500,000원
+- 월 총 운영비: 약 1,093,333원
+
+**시간 가치 (시급 2만원 기준)**
+- 대중교통 시간 비용: 132,000원/월
+- 자동차 시간 비용: 88,000원/월
+- 시간 절감 가치: 44,000원/월
+
+**결론**
+- 대중교통 월 총 비용: 272,800원
+- 자동차 월 총 비용: 1,181,333원
+- 손익분기점: 약 68개월 (5.7년)
+
+## 🎨 UI/UX 특징
+
+- 반응형 디자인 (모바일/데스크톱 대응)
+- 실시간 계산 결과 업데이트
+- 직관적인 입력 폼
+- 명확한 비용 비교 시각화
+- 상세 비용 분석 제공
+
+## 📌 향후 개선 계획
+
+- [ ] 그래프 시각화 (Chart.js)
+- [ ] 연도별 누적 비용 비교
+- [ ] 다양한 차량 프리셋 제공
+- [ ] 지역별 평균 비용 데이터 제공
+- [ ] 계산 결과 저장/공유 기능
+- [ ] 전기차/하이브리드 옵션 추가
+
+## 📄 라이선스
+
+MIT License
+
+## 👤 개발자
+
+노아에이티에스㈜ 2026년 신입사원 채용 사전과제
