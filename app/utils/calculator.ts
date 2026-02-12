@@ -16,7 +16,7 @@ export function calculateCosts(
   const monthlyDistance = commute.distance * 2 * commute.workDaysPerMonth;
   const fuelCost = (monthlyDistance / car.fuelEfficiency) * car.fuelPrice;
   const tollCost = car.tollFee * 2 * commute.workDaysPerMonth;
-  const depreciationMonthly = car.purchasePrice / (car.depreciationYears * 12);
+  const depreciationMonthly = (car.depreciationYears > 0) ? car.purchasePrice / (car.depreciationYears * 12) : 0;
   const insuranceMonthly = car.insurance / 12;
   const taxMonthly = car.tax / 12;
   const maintenanceMonthly = car.maintenanceFee / 12;
@@ -39,7 +39,10 @@ export function calculateCosts(
   // 자동차가 대중교통보다 저렴한 경우에만 손익분기점 계산
   let breakEvenMonths: number;
   
-  if (carTotalMonthlyCost < publicTransportTotalMonthlyCost) {
+  // 차량 구매가가 0이면 (현재 차량 유지) 손익분기점 없음
+  if (car.purchasePrice === 0) {
+    breakEvenMonths = 0; // 이미 차량 보유 중
+  } else if (carTotalMonthlyCost < publicTransportTotalMonthlyCost) {
     // 월별 절감액 (대중교통 - 자동차 운영비)
     // 자동차 운영비에서 감가상각 제외 (이미 차량 구매가로 지불했으므로)
     const carOperatingCostWithoutDepreciation = carMonthlyCost - depreciationMonthly + carTimeCost;
