@@ -37,6 +37,7 @@ type Step =
   | 'hasCarLoan'
   | 'monthlyCarLoan'
   | 'remainingLoanMonths'
+  | 'willBuyNewCar'
   | 'carPrice'
   | 'fuelEfficiency'
   | 'fuelPrice'
@@ -89,8 +90,10 @@ export default function ChatCalculator() {
   const [car, setCar] = useState<Partial<CarCosts>>({});
   const [timeValue, setTimeValue] = useState<Partial<TimeValue>>({});
   const [hasOwnCar, setHasOwnCar] = useState<boolean>(false);
+  const [willBuyNewCar, setWillBuyNewCar] = useState<boolean>(false);
   const [currentCarLoan, setCurrentCarLoan] = useState<{ monthly: number; remainingMonths: number }>({ monthly: 0, remainingMonths: 0 });
   const [calculationResult, setCalculationResult] = useState<any>(null);
+  const [includeTimeCost, setIncludeTimeCost] = useState<boolean>(true);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -107,6 +110,8 @@ export default function ChatCalculator() {
       case 'hasOwnCar':
         return ['예', '아니오'];
       case 'hasCarLoan':
+        return ['예', '아니오'];
+      case 'willBuyNewCar':
         return ['예', '아니오'];
       default:
         return step !== 'result' ? ['모름', '도움말'] : [];
@@ -150,7 +155,8 @@ export default function ChatCalculator() {
       'hasCarLoan': '현재 차량에 남은 할부금이 있는지 알려주세요. "예" 또는 "아니오"를 선택해주세요.',
       'monthlyCarLoan': '현재 차량의 월 할부금을 입력해주세요. 예: "50만원" 또는 "500000"',
       'remainingLoanMonths': '할부금을 몇 개월 더 납부해야 하는지 입력해주세요. 예: "12" 또는 "12개월"',
-      'carPrice': '구매하려는 차량 가격을 입력해주세요. "3천만원" 또는 "30000000"처럼 입력하시면 됩니다. 차량명도 인식 가능해요!',
+      'willBuyNewCar': '현재 차량을 팔고 새 차량으로 바꾸실 건지 알려주세요. "예"를 선택하면 새 차량 가격을 물어보고, "아니오"를 선택하면 현재 차량으로 계산합니다.',
+      'carPrice': '구매하려는 차량 가격을 입력해주세요. "3천만원" 또는 "30000000"처럼 입력하시면 됩니다.',
       'fuelEfficiency': '차량의 연비를 km/L 단위로 입력해주세요. 보통 경차는 15, 중형차는 12 정도입니다.',
       'fuelPrice': '현재 유류비를 리터당 가격으로 입력해주세요. 예: "1650" 또는 "1650원"',
       'insurance': '연간 자동차 보험료를 입력해주세요. "120만원" 또는 "1200000"처럼 입력하시면 됩니다.',
@@ -169,6 +175,20 @@ export default function ChatCalculator() {
     }, 300);
   };
 
+  const parseNumberWithAI = async (text: string, questionType: string): Promise<number | null> => {
+    try {
+      const res = await fetch('/api/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, questionType }),
+      });
+      const data = await res.json();
+      return data.value ?? null;
+    } catch {
+      return null;
+    }
+  };
+
   const parseNumber = (text: string, questionType: string): number | null => {
     // "모름" 키워드
     const unknownKeywords = ['모름', '모르', '몰라'];
@@ -184,80 +204,68 @@ export default function ChatCalculator() {
 
     // 차량명 인식 (carPrice 질문일 때만)
     if (questionType === 'carPrice') {
-      const carModels: { [key: string]: number } = {
-        '셀토스': 25000000,
-        '쏘렌토': 35000000,
-        '스포티지': 30000000,
-        '카니발': 40000000,
-        '아반떼': 20000000,
-        '쏘나타': 28000000,
-        '그랜저': 38000000,
-        '팰리세이드': 42000000,
-        '코나': 23000000,
-        '투싼': 28000000,
-        '싼타페': 35000000,
-        '모닝': 14000000,
-        '레이': 15000000,
-        'k3': 20000000,
-        'k5': 28000000,
-        'k7': 35000000,
-        'k8': 38000000,
-        'k9': 45000000,
-      };
-
-      // 차량명 찾기
-      for (const [model, price] of Object.entries(carModels)) {
-        if (text.toLowerCase().includes(model.toLowerCase())) {
-          // 연식 확인 (중고차 감가)
-          const yearMatch = text.match(/(\d{2,4})\s*년식/);
-          if (yearMatch) {
-            const year = parseInt(yearMatch[1]);
-            const fullYear = year < 100 ? 2000 + year : year;
-            const currentYear = 2026;
-            const age = currentYear - fullYear;
-            
-            // 연식별 감가율 적용 (연 10%)
-            const depreciation = Math.max(0.4, 1 - (age * 0.1));
-            return Math.round(price * depreciation);
-          }
-          return price;
-        }
+      // 한글이 포함되어 있고 숫자 단위(만, 천 등)가 아닌 경우 → 차량명으로 판단
+      const hasKorean = text.match(/[가-힣]{2,}/);
+      const hasUnit = text.match(/[만천백억원]/);
+      if (hasKorean && !hasUnit) {
+        return -1; // 차량명 입력 → 가격 직접 입력 요청
       }
     }
 
     // 한글 단위 파싱
     let result = 0;
+    let hasKoreanUnit = false;
     
     // 억
     const eokMatch = text.match(/(\d+)\s*억/);
-    if (eokMatch) result += parseInt(eokMatch[1]) * 100000000;
+    if (eokMatch) { result += parseInt(eokMatch[1]) * 100000000; hasKoreanUnit = true; }
     
     // 천만
     const cheonManMatch = text.match(/(\d+)\s*천\s*(\d+)?\s*백?\s*만/);
     if (cheonManMatch) {
       result += parseInt(cheonManMatch[1]) * 10000000;
       if (cheonManMatch[2]) result += parseInt(cheonManMatch[2]) * 1000000;
+      hasKoreanUnit = true;
     }
     
     // 백만
     const baekManMatch = text.match(/(\d+)\s*백\s*만/);
     if (baekManMatch && !cheonManMatch) {
       result += parseInt(baekManMatch[1]) * 1000000;
+      hasKoreanUnit = true;
     }
     
     // 만
     if (!cheonManMatch && !baekManMatch) {
       const manMatch = text.match(/(\d+)\s*만/);
-      if (manMatch) result += parseInt(manMatch[1]) * 10000;
+      if (manMatch) { result += parseInt(manMatch[1]) * 10000; hasKoreanUnit = true; }
     }
     
-    // 천
+    // 천 (만 없이 단독 사용: "2천", "2천5백")
     if (!cheonManMatch) {
       const cheonMatch = text.match(/(\d+)\s*천(?!만)/);
-      if (cheonMatch) result += parseInt(cheonMatch[1]) * 1000;
+      if (cheonMatch) { result += parseInt(cheonMatch[1]) * 1000; hasKoreanUnit = true; }
     }
 
-    if (result > 0) return result;
+    // 백 (만 없이 단독 사용: "5백", "2천5백"의 백 부분)
+    if (!baekManMatch && !cheonManMatch) {
+      const baekMatch = text.match(/(\d+)\s*백(?!만)/);
+      if (baekMatch) { result += parseInt(baekMatch[1]) * 100; hasKoreanUnit = true; }
+    }
+
+    if (result > 0) {
+      // 한글 단위가 있지만 "만"이 없는 경우 맥락 기반 보정
+      // 예: "2천5백" → 2500 → carPrice 맥락에서 2500만원(25,000,000)
+      const hasMan = /만/.test(text);
+      if (hasKoreanUnit && !hasMan && result < 100000) {
+        if (questionType === 'carPrice' || questionType === 'currentCarValue' || 
+            questionType === 'insurance' || questionType === 'tax' || 
+            questionType === 'maintenance' || questionType === 'monthlyCarLoan') {
+          result = result * 10000; // 만원 단위로 보정
+        }
+      }
+      return result;
+    }
 
     // 일반 숫자 추출
     const numbers = text.match(/\d+/g);
@@ -266,10 +274,10 @@ export default function ChatCalculator() {
       
       // 맥락에 따라 단위 보정
       if (num < 1000) {
-        if (questionType === 'insurance' || questionType === 'tax' || questionType === 'maintenance' || questionType === 'parking') {
+        if (questionType === 'insurance' || questionType === 'tax' || questionType === 'maintenance' || questionType === 'parking' || questionType === 'monthlyCarLoan' || questionType === 'currentCarValue') {
           num = num * 10000; // 만원 단위
         } else if (questionType === 'hourlyWage' && num < 100) {
-          num = num * 1000; // 천원 단위
+          num = num * 10000; // 만원 단위 (시급 2 → 2만원)
         }
       }
       
@@ -305,8 +313,8 @@ export default function ChatCalculator() {
         setHasOwnCar(false);
         setStep('carPrice');
         setTimeout(() => {
-          addMessage('bot', '구매하려는 차량 가격을 입력해주세요. "3천만원" 또는 "30000000"처럼 입력하시면 됩니다.');
-          setTimeout(() => addMessage('bot', '차량명도 인식 가능해요! 예: "21년식 셀토스", "그랜저", "아반떼"'), 300);
+          addMessage('bot', '구매하려는 차량 가격을 입력해주세요.');
+          setTimeout(() => addMessage('bot', '예: "3천만원" 또는 "30000000"'), 300);
         }, 500);
       } else {
         setTimeout(() => addMessage('bot', '"예" 또는 "아니오"를 선택해주세요!'), 300);
@@ -323,10 +331,35 @@ export default function ChatCalculator() {
         }, 500);
       } else if (userInput.includes('아니') || userInput.toLowerCase().includes('n')) {
         setCurrentCarLoan({ monthly: 0, remainingMonths: 0 });
+        setStep('willBuyNewCar');
+        setTimeout(() => {
+          addMessage('bot', '현재 차량을 팔고 새 차량으로 바꾸실 건가요? (예/아니오)');
+        }, 500);
+      } else {
+        setTimeout(() => addMessage('bot', '"예" 또는 "아니오"를 선택해주세요!'), 300);
+      }
+      return;
+    }
+
+    if (step === 'willBuyNewCar') {
+      if (userInput.includes('예') || userInput.toLowerCase().includes('y')) {
+        setWillBuyNewCar(true);
         setStep('carPrice');
         setTimeout(() => {
-          addMessage('bot', '구매하려는 차량 가격을 입력해주세요. "3천만원" 또는 "30000000"처럼 입력하시면 됩니다.');
-          setTimeout(() => addMessage('bot', '차량명도 인식 가능해요! 예: "21년식 셀토스", "그랜저", "아반떼"'), 300);
+          addMessage('bot', '구매하려는 차량 가격을 입력해주세요.');
+          setTimeout(() => addMessage('bot', '예: "3천만원" 또는 "30000000"'), 300);
+        }, 500);
+      } else if (userInput.includes('아니') || userInput.toLowerCase().includes('n')) {
+        setWillBuyNewCar(false);
+        // 현재 차량으로 계산 (구매 비용 0원, 감가상각 0년)
+        setCar(prev => ({ ...prev, purchasePrice: 0, depreciationYears: 0 }));
+        setStep('fuelEfficiency');
+        setTimeout(() => {
+          addMessage('bot', '알겠습니다! 현재 차량으로 계산하겠습니다.');
+          setTimeout(() => {
+            addMessage('bot', '차량의 연비를 km/L 단위로 입력해주세요. 보통 경차는 15, 중형차는 12 정도입니다.');
+            setTimeout(() => addMessage('bot', '예: "12" 또는 "모름"'), 300);
+          }, 500);
         }, 500);
       } else {
         setTimeout(() => addMessage('bot', '"예" 또는 "아니오"를 선택해주세요!'), 300);
@@ -337,6 +370,16 @@ export default function ChatCalculator() {
     // "모름" 빠른 처리
     const unknownKeywords = ['모름', '모르', '몰라'];
     if (unknownKeywords.some(k => userInput.includes(k))) {
+      // 시급 질문에서 "모름"이면 시간비용 제외
+      if (step === 'hourlyWage') {
+        setTimeout(() => {
+          addMessage('bot', '시급을 모르시면 시간 비용을 제외하고 계산할게요!');
+        }, 300);
+        setTimeout(() => {
+          processStep(step, 0); // 시급 0원 = 시간비용 계산 안함
+        }, 800);
+        return;
+      }
       const value = defaultValues[step];
       processStep(step, value);
       return;
@@ -345,10 +388,38 @@ export default function ChatCalculator() {
     // 로컬 파싱
     const parsedValue = parseNumber(userInput, step);
     
+    // 한글이 포함된 입력인데 로컬 파싱 실패 또는 범위 밖 → AI fallback
+    const hasKoreanText = /[가-힣]/.test(userInput);
+    
+    if (parsedValue === null && hasKoreanText) {
+      // AI 파싱 시도
+      setTimeout(() => addMessage('bot', '입력을 분석하고 있어요...'), 200);
+      parseNumberWithAI(userInput, step).then(aiValue => {
+        if (aiValue === null) {
+          addMessage('bot', '숫자를 인식하지 못했어요. 다시 입력해주세요.');
+        } else if (aiValue === -1) {
+          addMessage('bot', '차량명으로는 가격을 알 수 없어요. 가격을 숫자로 입력해주세요!\n예: "3천만원" 또는 "25000000"');
+        } else {
+          validateAndProcess(aiValue, userInput);
+        }
+      });
+      return;
+    }
+
     if (parsedValue === null) {
       setTimeout(() => addMessage('bot', '숫자를 입력해주세요. 모르시면 "모름" 버튼을 눌러주세요.'), 300);
       return;
     }
+
+    if (parsedValue === -1) {
+      setTimeout(() => addMessage('bot', '차량명으로는 가격을 알 수 없어요. 가격을 숫자로 입력해주세요!\n예: "3천만원" 또는 "25000000"'), 300);
+      return;
+    }
+
+    validateAndProcess(parsedValue, userInput);
+  };
+
+  const validateAndProcess = (parsedValue: number, userInput: string) => {
 
     // 범위 검증
     const ranges: { [key: string]: { min: number; max: number; unit: string } } = {
@@ -473,19 +544,18 @@ export default function ChatCalculator() {
 
       case 'remainingLoanMonths':
         setCurrentCarLoan(prev => ({ ...prev, remainingMonths: value }));
-        setStep('carPrice');
+        setStep('willBuyNewCar');
         setTimeout(() => {
           const totalRemainingLoan = currentCarLoan.monthly * value;
           addMessage('bot', `남은 할부금 총액은 ${totalRemainingLoan.toLocaleString()}원이네요. 이 금액도 고려하여 계산하겠습니다!`);
           setTimeout(() => {
-            addMessage('bot', '구매하려는 차량 가격을 입력해주세요. "3천만원" 또는 "30000000"처럼 입력하시면 됩니다.');
-            setTimeout(() => addMessage('bot', '차량명도 인식 가능해요! 예: "21년식 셀토스", "그랜저", "아반떼"'), 300);
+            addMessage('bot', '현재 차량을 팔고 새 차량으로 바꾸실 건가요? (예/아니오)');
           }, 500);
         }, 500);
         break;
 
       case 'carPrice':
-        if (hasOwnCar && car.currentCarValue) {
+        if (hasOwnCar && willBuyNewCar && car.currentCarValue) {
           const currentValue = car.currentCarValue;
           const remainingLoan = currentCarLoan.monthly * currentCarLoan.remainingMonths;
           const netCurrentValue = currentValue - remainingLoan;
@@ -578,11 +648,23 @@ export default function ChatCalculator() {
 
       case 'maintenance':
         setCar(prev => ({ ...prev, maintenanceFee: value }));
-        setStep('depreciation');
-        setTimeout(() => {
-          addMessage('bot', '차량을 몇 년 동안 사용할 계획인지 입력해주세요.');
-          setTimeout(() => addMessage('bot', '예: "3" 또는 "3년"'), 300);
-        }, 500);
+        // 현재 차량 유지 시 감가상각 질문 건너뛰기
+        if (hasOwnCar && !willBuyNewCar) {
+          setStep('hourlyWage');
+          setTimeout(() => {
+            addMessage('bot', '마지막 질문입니다!');
+            setTimeout(() => {
+              addMessage('bot', '본인의 시급을 입력해주세요. 시간의 가치를 계산하는데 사용됩니다.');
+              setTimeout(() => addMessage('bot', '예: "2만원" 또는 "20000"'), 300);
+            }, 500);
+          }, 500);
+        } else {
+          setStep('depreciation');
+          setTimeout(() => {
+            addMessage('bot', '차량을 몇 년 동안 사용할 계획인지 입력해주세요.');
+            setTimeout(() => addMessage('bot', '예: "3" 또는 "3년"'), 300);
+          }, 500);
+        }
         break;
 
       case 'depreciation':
@@ -621,9 +703,10 @@ export default function ChatCalculator() {
         return;
       }
 
-      if (!finalCar.purchasePrice || !finalCar.fuelEfficiency || !finalCar.fuelPrice || 
+      // 차량 정보 검증 (purchasePrice와 depreciationYears는 0일 수 있음)
+      if (finalCar.purchasePrice === undefined || !finalCar.fuelEfficiency || !finalCar.fuelPrice || 
           !finalCar.insurance || !finalCar.tax || finalCar.parkingFee === undefined || 
-          !finalCar.tollFee === undefined || !finalCar.maintenanceFee || !finalCar.depreciationYears) {
+          finalCar.tollFee === undefined || !finalCar.maintenanceFee || finalCar.depreciationYears === undefined) {
         addMessage('bot', '차량 정보가 부족합니다. 페이지를 새로고침하고 다시 시도해주세요.');
         return;
       }
@@ -634,43 +717,24 @@ export default function ChatCalculator() {
       addMessage('bot', '계산이 완료되었습니다!');
       
       setTimeout(() => {
-        addMessage('bot', `\n대중교통 월 총 비용: ${Math.round(result.publicTransport.totalMonthlyCost).toLocaleString()}원\n- 교통비: ${Math.round(result.publicTransport.monthlyCost).toLocaleString()}원\n- 시간 비용: ${Math.round(result.publicTransport.timeCost).toLocaleString()}원`);
-      }, 500);
-
-      setTimeout(() => {
-        addMessage('bot', `\n자동차 월 총 비용: ${Math.round(result.car.totalMonthlyCost).toLocaleString()}원\n- 감가상각: ${Math.round(result.car.breakdown.depreciation).toLocaleString()}원\n- 유류비: ${Math.round(result.car.breakdown.fuel).toLocaleString()}원\n- 보험: ${Math.round(result.car.breakdown.insurance).toLocaleString()}원\n- 세금: ${Math.round(result.car.breakdown.tax).toLocaleString()}원\n- 주차비: ${Math.round(result.car.breakdown.parking).toLocaleString()}원\n- 통행료: ${Math.round(result.car.breakdown.toll).toLocaleString()}원\n- 정비비: ${Math.round(result.car.breakdown.maintenance).toLocaleString()}원\n- 시간 비용: ${Math.round(result.car.timeCost).toLocaleString()}원`);
-      }, 1000);
-
-      setTimeout(() => {
-        const diff = Math.abs(result.car.totalMonthlyCost - result.publicTransport.totalMonthlyCost);
-        addMessage('bot', `\n월 비용 차이: ${Math.round(diff).toLocaleString()}원`);
-      }, 1500);
-
-      setTimeout(() => {
-        if (result.breakEvenMonths === Infinity) {
-          addMessage('bot', '\n손익분기점: 없음 (대중교통이 항상 저렴합니다)');
-        } else {
-          const years = Math.floor(result.breakEvenMonths / 12);
-          const months = Math.round(result.breakEvenMonths % 12);
-          addMessage('bot', `\n손익분기점: 약 ${years}년 ${months}개월`);
-        }
-      }, 2000);
-
-      setTimeout(() => {
         let recommendation = '';
         if (result.recommendation === 'publicTransport') {
-          recommendation = '추천: 대중교통을 이용하시는 것이 경제적으로 유리합니다!';
+          recommendation = '대중교통을 이용하시는 것이 경제적으로 유리합니다!';
         } else if (result.recommendation === 'car') {
-          recommendation = '추천: 자동차를 구매하시는 것이 경제적으로 유리합니다!';
+          if (hasOwnCar && !willBuyNewCar) {
+            recommendation = '현재 차량으로 출퇴근하시는 것이 경제적으로 유리합니다!';
+          } else {
+            recommendation = '자동차를 구매하시는 것이 경제적으로 유리합니다!';
+          }
         } else {
-          recommendation = '추천: 두 선택의 비용이 비슷합니다. 편의성을 고려하여 선택하세요!';
+          recommendation = '두 선택의 비용이 비슷합니다. 편의성을 고려하여 선택하세요!';
         }
-        addMessage('bot', `\n${recommendation}`);
-      }, 2500);
+        addMessage('bot', recommendation);
+      }, 800);
 
       setTimeout(() => {
-        addMessage('bot', '\n오른쪽에서 차트로 자세한 비교를 확인하세요!');
-      }, 3000);
+        addMessage('bot', '\n오른쪽 차트에서 자세한 비용 비교를 확인하세요!\n시간 비용 포함 여부를 토글로 조절할 수 있습니다.');
+      }, 1500);
     } catch (error) {
       console.error('계산 오류:', error);
       addMessage('bot', '계산 중 오류가 발생했습니다. 페이지를 새로고침하고 다시 시도해주세요.');
@@ -680,14 +744,15 @@ export default function ChatCalculator() {
   return (
     <div style={{
       display: 'flex',
-      gap: '20px',
-      maxWidth: calculationResult ? '1400px' : '800px',
+      gap: '24px',
+      maxWidth: calculationResult ? 'none' : '800px',
+      width: '100%',
       margin: '0 auto',
-      transition: 'max-width 0.5s ease',
+      transition: 'all 0.6s ease',
     }}>
       {/* 채팅창 */}
       <div style={{
-        flex: calculationResult ? '0 0 500px' : '1',
+        flex: calculationResult ? '0 0 480px' : '1',
         backgroundColor: 'white',
         borderRadius: '16px',
         boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
@@ -695,7 +760,7 @@ export default function ChatCalculator() {
         display: 'flex',
         flexDirection: 'column',
         height: '85vh',
-        transition: 'flex 0.5s ease',
+        transition: 'all 0.6s ease',
       }}>
         <div style={{
           backgroundColor: 'white',
@@ -875,16 +940,61 @@ export default function ChatCalculator() {
       {calculationResult && (
         <div style={{
           flex: 1,
+          minWidth: 0,
           backgroundColor: 'white',
           borderRadius: '16px',
           boxShadow: '0 10px 40px rgba(0,0,0,0.1)',
           padding: '30px',
           height: '85vh',
           overflowY: 'auto',
-          animation: 'slideIn 0.5s ease',
+          animation: 'slideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
         }}>
-          <h2 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '30px', color: '#333' }}>비용 비교 분석</h2>
+          <h2 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '20px', color: '#333' }}>비용 비교 분석</h2>
           
+          {/* 시간비용 포함 토글 */}
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '12px', 
+            marginBottom: '30px', 
+            padding: '14px 18px', 
+            backgroundColor: '#f3f0ff', 
+            borderRadius: '12px',
+            border: '1px solid #e0d4ff',
+          }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', flex: 1 }}>
+              <div 
+                onClick={() => setIncludeTimeCost(!includeTimeCost)}
+                style={{
+                  width: '44px',
+                  height: '24px',
+                  backgroundColor: includeTimeCost ? '#916AFF' : '#cbd5e1',
+                  borderRadius: '12px',
+                  position: 'relative',
+                  transition: 'background-color 0.2s',
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                }}
+              >
+                <div style={{
+                  width: '20px',
+                  height: '20px',
+                  backgroundColor: 'white',
+                  borderRadius: '50%',
+                  position: 'absolute',
+                  top: '2px',
+                  left: includeTimeCost ? '22px' : '2px',
+                  transition: 'left 0.2s',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                }} />
+              </div>
+              <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#333' }}>시간 가치를 비용에 포함</span>
+            </label>
+            <span style={{ fontSize: '12px', color: '#666' }}>
+              {includeTimeCost ? 'ON' : 'OFF'}
+            </span>
+          </div>
+
           {/* 총 비용 비교 막대 그래프 */}
           <div style={{ marginBottom: '40px' }}>
             <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '20px', color: '#666' }}>월 총 비용 비교</h3>
@@ -895,8 +1005,12 @@ export default function ChatCalculator() {
                   datasets: [{
                     label: '월 총 비용 (원)',
                     data: [
-                      Math.round(calculationResult.publicTransport.totalMonthlyCost),
-                      Math.round(calculationResult.car.totalMonthlyCost)
+                      Math.round(includeTimeCost 
+                        ? calculationResult.publicTransport.totalMonthlyCost 
+                        : calculationResult.publicTransport.monthlyCost),
+                      Math.round(includeTimeCost 
+                        ? calculationResult.car.totalMonthlyCost 
+                        : calculationResult.car.monthlyCost)
                     ],
                     backgroundColor: ['#3b82f6', '#ef4444'],
                     borderRadius: 8,
@@ -928,45 +1042,56 @@ export default function ChatCalculator() {
 
           {/* 비용 차이 */}
           <div style={{ marginBottom: '40px', padding: '20px', backgroundColor: '#f9fafb', borderRadius: '12px' }}>
-            <div style={{ fontSize: '14px', color: '#666', marginBottom: '8px' }}>월 비용 차이</div>
+            <div style={{ fontSize: '14px', color: '#666', marginBottom: '8px' }}>월 비용 차이 {!includeTimeCost && '(시간비용 제외)'}</div>
             <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#916AFF' }}>
-              {Math.round(Math.abs(calculationResult.car.totalMonthlyCost - calculationResult.publicTransport.totalMonthlyCost)).toLocaleString()}원
+              {(() => {
+                const pubCost = includeTimeCost ? calculationResult.publicTransport.totalMonthlyCost : calculationResult.publicTransport.monthlyCost;
+                const carCost = includeTimeCost ? calculationResult.car.totalMonthlyCost : calculationResult.car.monthlyCost;
+                return Math.round(Math.abs(carCost - pubCost)).toLocaleString();
+              })()}원
             </div>
             <div style={{ fontSize: '14px', color: '#666', marginTop: '8px' }}>
-              {calculationResult.car.totalMonthlyCost < calculationResult.publicTransport.totalMonthlyCost 
-                ? '자동차가 더 저렴합니다' 
-                : '대중교통이 더 저렴합니다'}
+              {(() => {
+                const pubCost = includeTimeCost ? calculationResult.publicTransport.totalMonthlyCost : calculationResult.publicTransport.monthlyCost;
+                const carCost = includeTimeCost ? calculationResult.car.totalMonthlyCost : calculationResult.car.monthlyCost;
+                return carCost < pubCost ? '자동차가 더 저렴합니다' : '대중교통이 더 저렴합니다';
+              })()}
             </div>
           </div>
 
           {/* 자동차 비용 구성 도넛 차트 */}
           <div style={{ marginBottom: '40px' }}>
-            <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '20px', color: '#666' }}>🚗 자동차 비용 구성</h3>
+            <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '20px', color: '#666' }}>자동차 비용 구성</h3>
             <div style={{ height: '300px', display: 'flex', justifyContent: 'center' }}>
               <Doughnut
                 data={{
-                  labels: ['감가상각', '유류비', '보험료', '자동차세', '주차비', '통행료', '정비비', '시간 비용'],
+                  labels: includeTimeCost 
+                    ? ['감가상각', '유류비', '보험료', '자동차세', '주차비', '통행료', '정비비', '시간 비용']
+                    : ['감가상각', '유류비', '보험료', '자동차세', '주차비', '통행료', '정비비'],
                   datasets: [{
-                    data: [
-                      Math.round(calculationResult.car.breakdown.depreciation),
-                      Math.round(calculationResult.car.breakdown.fuel),
-                      Math.round(calculationResult.car.breakdown.insurance),
-                      Math.round(calculationResult.car.breakdown.tax),
-                      Math.round(calculationResult.car.breakdown.parking),
-                      Math.round(calculationResult.car.breakdown.toll),
-                      Math.round(calculationResult.car.breakdown.maintenance),
-                      Math.round(calculationResult.car.timeCost),
-                    ],
-                    backgroundColor: [
-                      '#ef4444',
-                      '#f97316',
-                      '#f59e0b',
-                      '#eab308',
-                      '#84cc16',
-                      '#22c55e',
-                      '#10b981',
-                      '#14b8a6',
-                    ],
+                    data: includeTimeCost 
+                      ? [
+                          Math.round(calculationResult.car.breakdown.depreciation),
+                          Math.round(calculationResult.car.breakdown.fuel),
+                          Math.round(calculationResult.car.breakdown.insurance),
+                          Math.round(calculationResult.car.breakdown.tax),
+                          Math.round(calculationResult.car.breakdown.parking),
+                          Math.round(calculationResult.car.breakdown.toll),
+                          Math.round(calculationResult.car.breakdown.maintenance),
+                          Math.round(calculationResult.car.timeCost),
+                        ]
+                      : [
+                          Math.round(calculationResult.car.breakdown.depreciation),
+                          Math.round(calculationResult.car.breakdown.fuel),
+                          Math.round(calculationResult.car.breakdown.insurance),
+                          Math.round(calculationResult.car.breakdown.tax),
+                          Math.round(calculationResult.car.breakdown.parking),
+                          Math.round(calculationResult.car.breakdown.toll),
+                          Math.round(calculationResult.car.breakdown.maintenance),
+                        ],
+                    backgroundColor: includeTimeCost
+                      ? ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#22c55e', '#10b981', '#14b8a6']
+                      : ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#22c55e', '#10b981'],
                     borderWidth: 2,
                     borderColor: '#fff',
                   }]
@@ -999,20 +1124,22 @@ export default function ChatCalculator() {
             <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '15px', color: '#666' }}>세부 비용 비교</h3>
             <div style={{ display: 'flex', gap: '20px' }}>
               <div style={{ flex: 1 }}>
-                <h4 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '10px', color: '#3b82f6' }}>🚌 대중교통</h4>
+                <h4 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '10px', color: '#3b82f6' }}>대중교통</h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', backgroundColor: '#f0f9ff', borderRadius: '8px' }}>
                     <span style={{ fontSize: '13px' }}>교통비</span>
                     <span style={{ fontSize: '13px', fontWeight: 'bold' }}>{Math.round(calculationResult.publicTransport.monthlyCost).toLocaleString()}원</span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', backgroundColor: '#f0f9ff', borderRadius: '8px' }}>
-                    <span style={{ fontSize: '13px' }}>시간 비용</span>
-                    <span style={{ fontSize: '13px', fontWeight: 'bold' }}>{Math.round(calculationResult.publicTransport.timeCost).toLocaleString()}원</span>
-                  </div>
+                  {includeTimeCost && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', backgroundColor: '#f0f9ff', borderRadius: '8px' }}>
+                      <span style={{ fontSize: '13px' }}>시간 비용</span>
+                      <span style={{ fontSize: '13px', fontWeight: 'bold' }}>{Math.round(calculationResult.publicTransport.timeCost).toLocaleString()}원</span>
+                    </div>
+                  )}
                 </div>
               </div>
               <div style={{ flex: 1 }}>
-                <h4 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '10px', color: '#ef4444' }}>🚗 자동차</h4>
+                <h4 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '10px', color: '#ef4444' }}>자동차</h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {[
                     { label: '감가상각', value: calculationResult.car.breakdown.depreciation },
@@ -1022,7 +1149,7 @@ export default function ChatCalculator() {
                     { label: '주차비', value: calculationResult.car.breakdown.parking },
                     { label: '통행료', value: calculationResult.car.breakdown.toll },
                     { label: '정비비', value: calculationResult.car.breakdown.maintenance },
-                    { label: '시간 비용', value: calculationResult.car.timeCost },
+                    ...(includeTimeCost ? [{ label: '시간 비용', value: calculationResult.car.timeCost }] : []),
                   ].map((item, idx) => (
                     <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', backgroundColor: '#fef3f2', borderRadius: '8px' }}>
                       <span style={{ fontSize: '13px' }}>{item.label}</span>
@@ -1038,7 +1165,9 @@ export default function ChatCalculator() {
           <div style={{ padding: '20px', backgroundColor: '#fef9c3', borderRadius: '12px', border: '2px solid #eab308', marginBottom: '20px' }}>
             <div style={{ fontSize: '14px', color: '#666', marginBottom: '8px' }}>💡 손익분기점</div>
             <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#854d0e' }}>
-              {calculationResult.breakEvenMonths === Infinity 
+              {calculationResult.breakEvenMonths === 0
+                ? '해당 없음 (현재 차량 보유 중)'
+                : calculationResult.breakEvenMonths === Infinity 
                 ? '없음 (대중교통이 항상 저렴)' 
                 : `약 ${Math.floor(calculationResult.breakEvenMonths / 12)}년 ${Math.round(calculationResult.breakEvenMonths % 12)}개월`}
             </div>
@@ -1077,7 +1206,7 @@ export default function ChatCalculator() {
         @keyframes slideIn {
           from {
             opacity: 0;
-            transform: translateX(50px);
+            transform: translateX(80px);
           }
           to {
             opacity: 1;
